@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Docker Hub Cleanup
-        uses: your-username/docker-cleanup@v1
+        uses: lostlink/docker-cleanup@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -45,7 +45,7 @@ jobs:
 
 ```yaml
 - name: Docker Hub Cleanup
-  uses: your-username/docker-cleanup@v1
+  uses: lostlink/docker-cleanup@v1
   with:
     username: ${{ secrets.DOCKERHUB_USERNAME }}
     password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -158,7 +158,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Clean Docker Hub
-        uses: your-username/docker-cleanup@v1
+        uses: lostlink/docker-cleanup@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -191,7 +191,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Clean Docker Hub
-        uses: your-username/docker-cleanup@v1
+        uses: lostlink/docker-cleanup@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -228,7 +228,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Clean ${{ matrix.repository.name }}
-        uses: your-username/docker-cleanup@v1
+        uses: lostlink/docker-cleanup@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -243,7 +243,7 @@ jobs:
 ```yaml
 - name: Clean Docker Hub
   id: cleanup
-  uses: your-username/docker-cleanup@v1
+  uses: lostlink/docker-cleanup@v1
   with:
     username: ${{ secrets.DOCKERHUB_USERNAME }}
     password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -271,7 +271,7 @@ jobs:
 Always test with dry-run mode first:
 
 ```yaml
-- uses: your-username/docker-cleanup@v1
+- uses: lostlink/docker-cleanup@v1
   with:
     username: ${{ secrets.DOCKERHUB_USERNAME }}
     password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -286,7 +286,7 @@ Test the cleanup script locally:
 
 ```bash
 # Clone the action repository
-git clone https://github.com/your-username/docker-cleanup.git
+git clone https://github.com/lostlink/docker-cleanup.git
 cd docker-cleanup
 
 # Set environment variables
@@ -333,7 +333,7 @@ python scripts/dockerhub-cleanup.py \
 Enable verbose logging for detailed information:
 
 ```yaml
-- uses: your-username/docker-cleanup@v1
+- uses: lostlink/docker-cleanup@v1
   with:
     username: ${{ secrets.DOCKERHUB_USERNAME }}
     password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -373,7 +373,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🐛 Issues
 
-If you encounter any problems, please [file an issue](https://github.com/your-username/docker-cleanup/issues) along with a detailed description.
+If you encounter any problems, please [file an issue](https://github.com/lostlink/docker-cleanup/issues) along with a detailed description.
 
 ## 🙏 Acknowledgments
 
