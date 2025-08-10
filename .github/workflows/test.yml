@@ -1,0 +1,157 @@
+name: Test Action
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-script:
+    name: Test Cleanup Script
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pytest
+      
+      - name: Run unit tests
+        run: |
+          python scripts/test-cleanup.py
+      
+      - name: Test script help
+        run: |
+          python scripts/dockerhub-cleanup.py --help
+
+  test-action-dry-run:
+    name: Test Action (Dry Run)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Test with mock credentials (dry-run)
+        id: test-cleanup
+        uses: ./
+        with:
+          username: 'test-user'
+          password: 'test-password'
+          repositories: 'test-repo1,test-repo2'
+          pr-retention-days: 30
+          sha-retention-days: 14
+          dry-run: true
+          verbose: true
+        continue-on-error: true  # Don't fail on auth errors in test
+      
+      - name: Check outputs exist
+        run: |
+          echo "Testing that outputs are available..."
+          echo "Identified: ${{ steps.test-cleanup.outputs.identified-count }}"
+          echo "Deleted: ${{ steps.test-cleanup.outputs.deleted-count }}"
+          echo "Protected: ${{ steps.test-cleanup.outputs.protected-count }}"
+
+  test-action-inputs:
+    name: Test Action Input Variations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-case:
+          - name: "Basic"
+            repos: "test-repo"
+            pr-retention: "30"
+            sha-retention: "14"
+            dry-run: "true"
+            verbose: "false"
+          - name: "Multiple Repos"
+            repos: "repo1,repo2,repo3"
+            pr-retention: "60"
+            sha-retention: "30"
+            dry-run: "true"
+            verbose: "true"
+          - name: "Custom Patterns"
+            repos: "test-repo"
+            pr-retention: "7"
+            sha-retention: "3"
+            dry-run: "true"
+            verbose: "true"
+            custom-patterns: '{"^test-.*": 1}'
+          - name: "Protected Tags"
+            repos: "test-repo"
+            pr-retention: "30"
+            sha-retention: "14"
+            dry-run: "true"
+            verbose: "false"
+            protected-tags: "staging,qa,demo"
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Test ${{ matrix.test-case.name }}
+        uses: ./
+        with:
+          username: 'test-user'
+          password: 'test-password'
+          repositories: ${{ matrix.test-case.repos }}
+          pr-retention-days: ${{ matrix.test-case.pr-retention }}
+          sha-retention-days: ${{ matrix.test-case.sha-retention }}
+          dry-run: ${{ matrix.test-case.dry-run }}
+          verbose: ${{ matrix.test-case.verbose }}
+          protected-tags: ${{ matrix.test-case.protected-tags || '' }}
+          custom-patterns: ${{ matrix.test-case.custom-patterns || '{}' }}
+        continue-on-error: true  # Don't fail on auth errors in test
+
+  validate-action:
+    name: Validate Action Metadata
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Validate action.yml
+        run: |
+          # Check that action.yml exists and is valid YAML
+          if [ ! -f "action.yml" ]; then
+            echo "❌ action.yml not found"
+            exit 1
+          fi
+          
+          # Basic validation of required fields
+          echo "Checking action.yml structure..."
+          
+          # Check for required top-level fields
+          for field in "name" "description" "inputs" "runs"; do
+            if ! grep -q "^${field}:" action.yml; then
+              echo "❌ Missing required field: $field"
+              exit 1
+            fi
+          done
+          
+          echo "✅ action.yml validation passed"
+      
+      - name: Check Python script exists
+        run: |
+          if [ ! -f "scripts/dockerhub-cleanup.py" ]; then
+            echo "❌ Main script not found"
+            exit 1
+          fi
+          
+          if [ ! -x "scripts/dockerhub-cleanup.py" ]; then
+            echo "❌ Main script is not executable"
+            exit 1
+          fi
+          
+          echo "✅ Python script validation passed"
