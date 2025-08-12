@@ -39,6 +39,8 @@ def test_patterns():
         ("main-12345", "none"),  # Invalid SHA (not hex)
         ("v1", "none"),  # v1 without dots is not protected
         ("1.0.0.0", "none"),  # Too many version parts
+        ("latest-l11", "none"),  # Not a protected pattern
+        ("latest-v2", "none"),  # Similar variant, not protected
     ]
     
     print("Testing tag patterns...")
@@ -193,6 +195,63 @@ def test_url_encoding():
     return failed == 0
 
 
+def test_repository_parsing():
+    """Test repository specification parsing (namespace/repository)"""
+    
+    print("\nTesting repository specification parsing...")
+    print("-" * 60)
+    
+    def parse_repository_spec(repo_spec):
+        """Parse repository specification to extract namespace and repository name."""
+        parts = repo_spec.split('/')
+        if len(parts) == 2:
+            # Format: namespace/repository
+            return parts[0], parts[1]
+        elif len(parts) == 1:
+            # Format: repository (namespace must be provided separately)
+            return None, parts[0]
+        else:
+            return None, None  # Invalid format
+    
+    test_cases = [
+        # (input, expected_namespace, expected_repo)
+        ("myrepo", None, "myrepo"),
+        ("namespace/myrepo", "namespace", "myrepo"),
+        ("org/team/repo", None, None),  # Invalid - too many parts
+        ("", None, ""),  # Edge case - empty string
+        ("namespace/", "namespace", ""),  # Edge case - trailing slash
+        ("/repo", "", "repo"),  # Edge case - leading slash
+        ("docker.io/namespace/repo", None, None),  # Invalid - registry included
+        ("myorg/webapp", "myorg", "webapp"),  # Example org/repo format
+        ("company/service", "company", "service"),  # Example company/service format
+    ]
+    
+    passed = 0
+    failed = 0
+    
+    for repo_spec, expected_ns, expected_repo in test_cases:
+        namespace, repository = parse_repository_spec(repo_spec)
+        
+        if namespace == expected_ns and repository == expected_repo:
+            status = "✅"
+            passed += 1
+        else:
+            status = "❌"
+            failed += 1
+        
+        # Format None values as "None" for display
+        exp_ns = str(expected_ns) if expected_ns is not None else "None"
+        exp_repo = str(expected_repo) if expected_repo is not None else "None"
+        got_ns = str(namespace) if namespace is not None else "None"
+        got_repo = str(repository) if repository is not None else "None"
+        
+        print(f"{status} Input: {repo_spec:25} Expected: {exp_ns:10}/{exp_repo:15} Got: {got_ns:10}/{got_repo}")
+    
+    print("-" * 60)
+    print(f"Results: {passed} passed, {failed} failed")
+    return failed == 0
+
+
 def main():
     """Run all tests"""
     print("=" * 60)
@@ -206,6 +265,7 @@ def main():
     all_passed = test_date_parsing() and all_passed
     all_passed = test_retention_logic() and all_passed
     all_passed = test_url_encoding() and all_passed
+    all_passed = test_repository_parsing() and all_passed
     
     # Summary
     print("\n" + "=" * 60)

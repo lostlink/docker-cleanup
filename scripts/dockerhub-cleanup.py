@@ -19,10 +19,9 @@ import base64
 
 
 class DockerHubCleaner:
-    def __init__(self, username, password, namespace, dry_run=False, verbose=False, protected_tags=None, custom_patterns=None):
+    def __init__(self, username, password, dry_run=False, verbose=False, protected_tags=None, custom_patterns=None):
         self.username = username
         self.password = password  # Can be password or Personal Access Token
-        self.namespace = namespace
         self.dry_run = dry_run
         self.verbose = verbose
         self.protected_tags = protected_tags or []
@@ -92,6 +91,21 @@ class DockerHubCleaner:
         
         return wrapper
     
+    def parse_repository_spec(self, repo_spec):
+        """
+        Parse repository specification to extract namespace and repository name.
+        Handles both 'repo' and 'namespace/repo' formats.
+        """
+        parts = repo_spec.split('/')
+        if len(parts) == 2:
+            # Format: namespace/repository
+            return parts[0], parts[1]
+        elif len(parts) == 1:
+            # Format: repository (namespace must be provided separately)
+            return None, parts[0]
+        else:
+            raise ValueError(f"Invalid repository format: {repo_spec}. Use 'repository' or 'namespace/repository'")
+    
     def get_basic_auth_header(self):
         """Get basic auth header for authentication"""
         credentials = f"{self.username}:{self.password}"
@@ -99,18 +113,19 @@ class DockerHubCleaner:
         return f"Basic {encoded}"
     
     @retry_with_backoff
-    def get_bearer_token(self, repository):
+    def get_bearer_token(self, namespace, repository):
         """Get bearer token for specific repository operations"""
         # Check if we have a cached token for this repository
-        if repository in self.tokens:
-            token_data = self.tokens[repository]
+        cache_key = f"{namespace}/{repository}"
+        if cache_key in self.tokens:
+            token_data = self.tokens[cache_key]
             # Simple cache - tokens typically last 5 minutes
             if (datetime.now(timezone.utc) - token_data['created']).total_seconds() < 240:  # 4 minutes
-                self.log(f"  Using cached token for {repository}", "DEBUG")
+                self.log(f"  Using cached token for {cache_key}", "DEBUG")
                 return token_data['token']
         
         # Request new token
-        scope = f"repository:{self.namespace}/{repository}:pull,push,delete"
+        scope = f"repository:{namespace}/{repository}:pull,push,delete"
         url = f"{self.auth_url}/token"
         params = {
             "service": "registry.docker.io",
@@ -121,7 +136,7 @@ class DockerHubCleaner:
             "Authorization": self.get_basic_auth_header()
         }
         
-        self.log(f"  Requesting bearer token for {repository}...", "DEBUG")
+        self.log(f"  Requesting bearer token for {namespace}/{repository}...", "DEBUG")
         
         try:
             response = requests.get(url, params=params, headers=headers, timeout=self.request_timeout)
@@ -129,25 +144,25 @@ class DockerHubCleaner:
             token = response.json().get("token")
             
             # Cache the token
-            self.tokens[repository] = {
+            self.tokens[cache_key] = {
                 'token': token,
                 'created': datetime.now(timezone.utc)
             }
             
-            self.log(f"  ✅ Got bearer token for {repository}", "DEBUG")
+            self.log(f"  ✅ Got bearer token for {namespace}/{repository}", "DEBUG")
             return token
             
         except requests.exceptions.RequestException as e:
-            self.log(f"  Failed to get bearer token for {repository}: {e}", "DEBUG")
+            self.log(f"  Failed to get bearer token for {namespace}/{repository}: {e}", "DEBUG")
             raise
     
     @retry_with_backoff
-    def get_tags_registry(self, repository):
+    def get_tags_registry(self, namespace, repository):
         """Get tags using Docker Registry API (more reliable)"""
         tags = []
-        token = self.get_bearer_token(repository)
+        token = self.get_bearer_token(namespace, repository)
         
-        url = f"{self.registry_url}/{self.namespace}/{repository}/tags/list"
+        url = f"{self.registry_url}/{namespace}/{repository}/tags/list"
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json"
@@ -162,16 +177,13 @@ class DockerHubCleaner:
             if not tag_names:
                 return []
             
-            # For each tag, we need to get its manifest to get the last updated time
-            # This is more complex but more accurate
             self.log(f"  Found {len(tag_names)} tags, fetching details...", "DEBUG")
             
             for tag_name in tag_names:
-                # For simplicity, we'll use a default date for now
-                # In production, you'd want to fetch manifest for each tag
+                # Registry API doesn't provide last_updated, use current time as fallback
                 tags.append({
                     "name": tag_name,
-                    "last_updated": datetime.now(timezone.utc).isoformat()  # Placeholder
+                    "last_updated": datetime.now(timezone.utc).isoformat()
                 })
             
             return tags
@@ -179,10 +191,10 @@ class DockerHubCleaner:
         except requests.exceptions.RequestException as e:
             self.log(f"  Registry API failed, trying Hub API: {e}", "DEBUG")
             # Fall back to Hub API
-            return self.get_tags_hub(repository)
+            return self.get_tags_hub(namespace, repository)
     
     @retry_with_backoff
-    def get_tags_hub(self, repository):
+    def get_tags_hub(self, namespace, repository):
         """Get tags using Docker Hub API (fallback)"""
         tags = []
         page = 1
@@ -195,13 +207,13 @@ class DockerHubCleaner:
             headers["Authorization"] = self.get_basic_auth_header()
         
         while True:
-            url = f"{self.hub_url}/repositories/{self.namespace}/{repository}/tags"
+            url = f"{self.hub_url}/repositories/{namespace}/{repository}/tags"
             params = {
                 "page": page,
                 "page_size": page_size
             }
             
-            self.log(f"📄 Fetching page {page} of tags for {repository}...", "DEBUG")
+            self.log(f"📄 Fetching page {page} of tags for {namespace}/{repository}...", "DEBUG")
             
             try:
                 response = requests.get(
@@ -225,36 +237,36 @@ class DockerHubCleaner:
                 page += 1
                 
             except requests.exceptions.RequestException as e:
-                self.log(f"❌ Failed to get tags for {repository}: {e}", "ERROR")
+                self.log(f"❌ Failed to get tags for {namespace}/{repository}: {e}", "ERROR")
                 break
         
         return tags
     
-    def get_tags(self, repository):
+    def get_tags(self, namespace, repository):
         """Get all tags for a repository (tries both APIs)"""
         # Try Hub API first (has better tag metadata)
-        tags = self.get_tags_hub(repository)
+        tags = self.get_tags_hub(namespace, repository)
         
         # If Hub API fails, try Registry API
         if not tags:
             self.log(f"  Trying Registry API as fallback...", "DEBUG")
-            tags = self.get_tags_registry(repository)
+            tags = self.get_tags_registry(namespace, repository)
         
         return tags
     
     @retry_with_backoff
-    def delete_tag(self, repository, tag):
+    def delete_tag(self, namespace, repository, tag):
         """Delete a specific tag from a repository"""
         if self.dry_run:
-            self.log(f"  🔍 [DRY RUN] Would delete: {repository}:{tag}")
+            self.log(f"  🔍 [DRY RUN] Would delete: {namespace}/{repository}:{tag}")
             return True
         
         # Try Registry API delete first (more reliable)
         try:
-            token = self.get_bearer_token(repository)
+            token = self.get_bearer_token(namespace, repository)
             
             # First, get the manifest digest
-            manifest_url = f"{self.registry_url}/{self.namespace}/{repository}/manifests/{tag}"
+            manifest_url = f"{self.registry_url}/{namespace}/{repository}/manifests/{tag}"
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.docker.distribution.manifest.v2+json"
@@ -269,11 +281,11 @@ class DockerHubCleaner:
                 raise Exception("No digest found in manifest response")
             
             # Now delete by digest
-            delete_url = f"{self.registry_url}/{self.namespace}/{repository}/manifests/{digest}"
+            delete_url = f"{self.registry_url}/{namespace}/{repository}/manifests/{digest}"
             response = requests.delete(delete_url, headers=headers, timeout=self.request_timeout)
             response.raise_for_status()
             
-            self.log(f"  ✅ Deleted: {repository}:{tag}")
+            self.log(f"  ✅ Deleted: {namespace}/{repository}:{tag}")
             return True
             
         except Exception as e:
@@ -283,7 +295,7 @@ class DockerHubCleaner:
             try:
                 # URL encode the tag name to handle special characters
                 encoded_tag = quote(tag, safe='')
-                url = f"{self.hub_url}/repositories/{self.namespace}/{repository}/tags/{encoded_tag}"
+                url = f"{self.hub_url}/repositories/{namespace}/{repository}/tags/{encoded_tag}"
                 
                 headers = {}
                 if self.username and self.password:
@@ -291,39 +303,27 @@ class DockerHubCleaner:
                 
                 response = requests.delete(url, headers=headers, timeout=self.request_timeout)
                 response.raise_for_status()
-                self.log(f"  ✅ Deleted via Hub API: {repository}:{tag}")
+                self.log(f"  ✅ Deleted via Hub API: {namespace}/{repository}:{tag}")
                 return True
                 
             except requests.exceptions.RequestException as e2:
-                self.log(f"  ❌ Failed to delete {repository}:{tag}: {e2}", "ERROR")
+                self.log(f"  ❌ Failed to delete {namespace}/{repository}:{tag}: {e2}", "ERROR")
                 return False
     
     def test_authentication(self):
         """Test if authentication works"""
         self.log("🔐 Testing authentication...")
         
-        # Test 1: Try to get a token for a known repository
-        # Note: This might fail with the namespace as repo name, which is expected
+        # Test Hub API with basic auth to verify credentials
         try:
-            test_repo = self.namespace  # Use namespace as test repo
-            token = self.get_bearer_token(test_repo)
-            if token:
-                self.log("✅ Bearer token authentication successful")
-                return True
-        except Exception as e:
-            # Only show this in verbose mode - it's expected to fail sometimes
-            self.log(f"  Bearer token test with namespace failed (expected): {e}", "DEBUG")
-        
-        # Test 2: Try Hub API with basic auth
-        try:
-            url = f"{self.hub_url}/repositories/{self.namespace}"
+            url = f"{self.hub_url}/users/{self.username}"
             headers = {"Authorization": self.get_basic_auth_header()}
             response = requests.get(url, headers=headers, timeout=self.request_timeout)
             if response.status_code == 200:
-                self.log("✅ Hub API authentication successful")
+                self.log("✅ Authentication successful")
                 return True
         except Exception as e:
-            self.log(f"⚠️  Hub API test failed: {e}", "DEBUG")
+            self.log(f"⚠️  Authentication test failed: {e}", "DEBUG")
         
         self.log("❌ Authentication failed - please check your credentials", "ERROR")
         self.log("   Make sure DOCKERHUB_USERNAME and DOCKERHUB_PASSWORD are set correctly", "ERROR")
@@ -369,15 +369,29 @@ class DockerHubCleaner:
         # Unknown format - don't delete
         return False, "unknown"
     
-    def cleanup_repository(self, repository, pr_retention_days=30, sha_retention_days=14):
-        """Clean up old tags from a repository"""
-        self.log(f"\n📦 Processing repository: {repository}")
+    def cleanup_repository(self, repo_spec, default_namespace=None, pr_retention_days=30, sha_retention_days=14):
+        """
+        Clean up old tags from a repository
+        repo_spec can be either 'repository' or 'namespace/repository'
+        """
+        # Parse repository specification
+        namespace, repository = self.parse_repository_spec(repo_spec)
         
-        tags = self.get_tags(repository)
+        # Use default namespace if not specified in repo_spec
+        if namespace is None:
+            if default_namespace is None:
+                self.log(f"❌ Error: No namespace specified for repository '{repository}'", "ERROR")
+                self.log("   Use format 'namespace/repository' or set DOCKER_NAMESPACE", "ERROR")
+                return None
+            namespace = default_namespace
+        
+        self.log(f"\n📦 Processing repository: {namespace}/{repository}")
+        
+        tags = self.get_tags(namespace, repository)
         if not tags:
             self.log(f"  ℹ️  No tags found")
             repo_stats = {
-                "repository": repository,
+                "repository": f"{namespace}/{repository}",
                 "total_tags": 0,
                 "protected": 0,
                 "deleted": 0,
@@ -438,7 +452,7 @@ class DockerHubCleaner:
                 identified_count += 1
                 self.stats["identified_count"] += 1
                 
-                if self.delete_tag(repository, tag_name):
+                if self.delete_tag(namespace, repository, tag_name):
                     deleted_count += 1
                     self.stats["deleted_count"] += 1
                 else:
@@ -451,7 +465,7 @@ class DockerHubCleaner:
                 kept_count += 1
         
         # Summary
-        self.log(f"\n  📈 Summary for {repository}:")
+        self.log(f"\n  📈 Summary for {namespace}/{repository}:")
         self.log(f"     Protected: {protected_count}")
         self.log(f"     Identified: {identified_count}")
         self.log(f"     Deleted: {deleted_count}")
@@ -460,7 +474,7 @@ class DockerHubCleaner:
             self.log(f"     Failed: {failed_count}", "WARNING")
         
         repo_stats = {
-            "repository": repository,
+            "repository": f"{namespace}/{repository}",
             "total_tags": len(tags),
             "protected": protected_count,
             "deleted": deleted_count,
@@ -519,7 +533,6 @@ def main():
     cleaner = DockerHubCleaner(
         username, 
         password, 
-        namespace, 
         args.dry_run, 
         args.verbose,
         protected_tags,
@@ -534,25 +547,29 @@ def main():
     results = []
     failed_repos = []
     
-    for repo in args.repositories:
+    for repo_spec in args.repositories:
         try:
             result = cleaner.cleanup_repository(
-                repo, 
+                repo_spec,
+                namespace,  # Use as default namespace for unqualified repos 
                 args.pr_retention,
                 args.sha_retention
             )
-            results.append(result)
-            
-            # Track repositories with failures
-            if result and result.get("failed", 0) > 0:
-                failed_repos.append(repo)
+            if result:
+                results.append(result)
+                
+                # Track repositories with failures
+                if result.get("failed", 0) > 0:
+                    failed_repos.append(result["repository"])
+            else:
+                failed_repos.append(repo_spec)
                 
         except Exception as e:
-            cleaner.log(f"❌ Failed to process {repo}: {e}", "ERROR")
-            failed_repos.append(repo)
+            cleaner.log(f"❌ Failed to process {repo_spec}: {e}", "ERROR")
+            failed_repos.append(repo_spec)
             # Add a failure result for this repository
             results.append({
-                "repository": repo,
+                "repository": repo_spec,
                 "total_tags": 0,
                 "protected": 0,
                 "deleted": 0,

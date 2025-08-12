@@ -59,6 +59,26 @@ jobs:
     custom-patterns: '{"^feature-.*": 7, "^hotfix-.*": 3}'  # Custom patterns with retention days
 ```
 
+### Multiple Organizations/Namespaces
+
+You can clean repositories from different organizations by specifying the full namespace:
+
+```yaml
+- name: Docker Hub Cleanup
+  uses: lostlink/docker-cleanup@v1
+  with:
+    username: ${{ secrets.DOCKERHUB_USERNAME }}
+    password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    # Mix repositories from different namespaces
+    repositories: 'myorg/frontend,mycompany/backend,personal-repo'
+    dry-run: false
+```
+
+When specifying repositories:
+- Use `namespace/repository` format to access repositories in specific organizations
+- Use just `repository` to use the default namespace (organization input or username)
+- You can mix both formats in the same repositories list
+
 ## 📋 Prerequisites
 
 ### GitHub Secrets
@@ -91,8 +111,8 @@ For enhanced security, use a Docker Hub Personal Access Token instead of your pa
 |-------|-------------|----------|---------|
 | `username` | Docker Hub username | ✅ | - |
 | `password` | Docker Hub password or Personal Access Token | ✅ | - |
-| `organization` | Docker Hub organization/namespace | ❌ | `username` |
-| `repositories` | Comma-separated list of repository names | ✅ | - |
+| `organization` | Default Docker Hub organization/namespace | ❌ | `username` |
+| `repositories` | Comma-separated list of repository names (can include namespace) | ✅ | - |
 | `pr-retention-days` | Days to retain PR tags (pr-*) | ❌ | `30` |
 | `sha-retention-days` | Days to retain branch SHA tags | ❌ | `14` |
 | `dry-run` | Preview deletions without executing | ❌ | `true` |
@@ -292,13 +312,19 @@ cd docker-cleanup
 # Set environment variables
 export DOCKERHUB_USERNAME=your-username
 export DOCKERHUB_PASSWORD=your-password-or-token
-export DOCKER_NAMESPACE=your-org  # Optional
+export DOCKER_NAMESPACE=your-org  # Optional: default namespace for unqualified repos
 
 # Run with dry-run
 python scripts/dockerhub-cleanup.py \
   --repositories repo1 repo2 \
   --pr-retention 30 \
   --sha-retention 14 \
+  --dry-run \
+  --verbose
+
+# Or specify repositories with their namespace
+python scripts/dockerhub-cleanup.py \
+  --repositories myorg/repo1 anotherorg/repo2 personal-repo \
   --dry-run \
   --verbose
 ```
@@ -315,7 +341,8 @@ python scripts/dockerhub-cleanup.py \
 #### "Repository not found"
 - Verify the repository names are correct
 - Check the organization/namespace setting
-- Ensure repositories exist and are accessible
+- For repositories in other organizations, use the full `namespace/repository` format
+- Ensure repositories exist and are accessible with your credentials
 
 #### No tags deleted
 - Verify tags meet deletion criteria (age and pattern)
